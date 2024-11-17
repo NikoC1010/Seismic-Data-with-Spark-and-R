@@ -1,0 +1,171 @@
+library(dplyr)
+library(ggplot2)
+library(shiny)
+library(sparklyr)
+library(shinydashboard)
+library(wordcloud2)
+library(jiebaR)#Word segmentation kit
+
+sc <- spark_connect(method = "databricks")
+#eq_tbl <- spark_read_csv(sc, path = "/FileStore/tables/earthquake_data-2.csv")
+earthquake <- spark_read_csv(sc, path = "/FileStore/tables/earthquake_data-2.csv")
+
+
+
+# Define the UI
+header<-dashboardHeader(title = 'Group P')
+
+sidebar<-dashboardSidebar(
+  sidebarMenu(
+    menuItem("Regressions", tabName = "Depth_and_gap", icon = icon("stream")),
+    menuItem("WordCloud", tabName = "wordcloud", icon = icon("dashboard")),
+    menuItem("Linear regression", tabName = "linearregression", icon = icon("trophy")),
+    menuItem("Logistic regression", tabName = "logisticregression", icon = icon("bus"))
+  )
+)
+
+body<-dashboardBody(
+  tabItems(
+    tabItem(
+      tabName = "Depth_and_gap",
+      fluidRow(
+        box(
+          sliderInput("gap", "Select gap Range:",
+              min = 0, max = 250, value = c(0,250), step = 1)
+        )
+      ),
+      fluidRow(
+        box(
+          plotOutput('plot')
+        )
+      )
+    ),
+    tabItem(
+      tabName = "wordcloud",
+      fluidRow(
+        box(
+          sliderInput('size','The font size:',
+                      min = 0.05,max = 0.5,
+                      value = 0.09)
+        )
+      ),
+      fluidRow(
+        box(
+          wordcloud2Output('plot1')
+        )
+      )
+    ),
+    tabItem(
+      tabName = "linearregression",
+      fluidRow(
+        box(
+          plotOutput("plot2")
+          #radioButtons("Varibale", "Variable type:",
+                       #choices = c("MagType" = 'magType',
+                         #"Location" = "location",
+                         #"Alert" = "alert",
+                        # "Tsunami" = "tsunami",
+                        # "Net" = "net"))
+        )
+      ),
+      fluidRow(
+        box(
+          plotOutput("plot3")
+        )
+      )
+    ),
+    tabItem(
+      tabName = "logisticregression",
+      fluidRow(
+        box(
+          plotOutput("plot4")
+        )
+      ),
+      fluidRow(
+        box(
+         plotOutput("plot5")
+        )
+      )
+    )
+  )
+)
+
+ui <- dashboardPage(header,sidebar,body)
+#ui <- fluidPage(
+  #sliderInput("gap", "Select sig Range:",
+              #min = 0, max = 250, value = c(0,250), step = 1),
+  #plotOutput('plot')
+#)#
+
+# Define the server code
+server <- function(input, output) {
+  #1 -- Depth vs. gap
+  output$plot <- renderPlot({
+    # Select diamonds in carat range
+    df_re <- earthquake %>%
+      dplyr::select("gap", "depth") %>%
+      dplyr::filter(gap >= !!input$gap[[1]], gap <= !!input$gap[[2]], depth <= 250)
+
+    # Scatter plot with smoothed means
+    ggplot(df_re, aes(gap, depth)) +
+      geom_point(alpha = 1/2) +
+      geom_smooth() +
+      scale_size_area(max_size = 2) +
+      ggtitle("Depth vs. gap")
+  })
+  
+  
+  #2 -- WordCloud2
+  output$plot1<-renderWordcloud2({
+    var_names <- colnames(earthquake)
+    var_names<-freq(var_names)#var_names was divided into words and the frequency of each word was counted
+    wordcloud2(var_names,
+              size = input$size,
+              color = 'random-light',
+              backgroundColor = 'white',
+              minRotation = -pi/4, #Minimum rotation Angle
+              maxRotation = pi/4, #Maximum rotation Angle
+              rotateRatio = 0.4, #The ratio of the rotation Angle
+              shape = 'circle')
+  })
+  
+  
+  #3 -- Linear regression
+  output$plot2 <- renderPlot({
+    ggplot(data = testingData, aes(x = sig, y = depth)) +
+     geom_point() +
+     geom_abline(slope = coef(lrmodel)[2], intercept = coef(lrmodel)[1], color = "blue") +
+     labs(x = "sig", y = "Depth", title = "Linear regression:")
+  })
+    
+  output$plot3 <- renderPlot({
+    ggplot(data = testingData, aes(x = gap, y = depth)) +
+     geom_point() +
+     geom_abline(slope = coef(lrmodel)[2], intercept = coef(lrmodel)[1], color = "red") +
+     labs(x = "gap", y = "Depth", title = "Linear regression:")
+  })
+  
+  
+  #4 -- Logistic regression
+  output$plot4 <- renderPlot({
+    ggplot(data = testingData, aes(x = sig, y = gap, color = tsunami)) +
+     geom_point() +
+     labs(title = "Scatter plot of Tsunami Prediction",
+          x = "Sig",
+          y = "Gap",
+          color = "Tsunami") +
+     theme_minimal()
+  })
+  
+  output$plot4 <- renderPlot({
+    ggplot(data = testingData, aes(x = factor(tsunami), y = sig, group = factor(tsunami))) +
+     geom_boxplot() +
+     labs(title = "Box plot of Tsunami Prediction",
+          x = "Tsunami",
+          y = "Sig") +
+     theme_minimal()
+  })
+}
+
+# Return a Shiny app object
+shinyApp(ui = ui, server = server)
